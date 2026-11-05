@@ -1,7 +1,7 @@
 LSDOS631N for TRS-80 Model II
 =============================
 
-TRS-80 LS-DOS 6.3.1 Level M for Model II source files with bug fixes and date support up to 2079
+TRS-80 LS-DOS 6.3.1 Level M for Model II with harddisk support and autoboot. Source files with bug fixes and date support up to 2079
 ------------------------------------------------------------------------------------------------
 
 This repository contains the source files to build a working version of LS-DOS 6.3.1 Level N for Model II.
