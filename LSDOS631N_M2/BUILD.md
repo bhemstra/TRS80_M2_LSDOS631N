@@ -1,6 +1,10 @@
 LS-DOS 6.3.1 for Model II/12/16 Build System
 ============================================
 
+To build with zmac on the host instead (no MRAS, and also a hard disk
+image that boots LS-DOS from the hard disk, switch `@HD` in
+`lsdos631/buildver.asm`), see [zmac-build/readme.md](zmac-build/readme.md).
+
 First get the tools needed to build the system disk images:
 - Run `get_trs80gp.sh` to download the [TRS80gp](http://48k.ca) emulator from George Phillips
 - Run `get_hxcfe.sh` to download the [HxC Floppy Emulator softwate](https://hxc2001.com/download/floppy_drive_emulator/)
