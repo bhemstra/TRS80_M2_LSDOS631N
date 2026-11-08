@@ -33,8 +33,9 @@ compiler; on Windows it uses the `zmac.exe` from that clone).
     python3 build.py floppy     # only the floppy system
 
 The sources are copied to `work/hd` or `work/floppy` with Unix line ends,
-and `BUILDVER/ASM` there gets `@ZMAC` (and for the hard disk `@HD`) set
-to -1. Then lowcore (BOOT/SYS), SYSRES (SYS0), SYS1-SYS13, the library
+and for the hard disk `BUILDVER/ASM` there gets `@HD` set to -1. The
+sources themselves stay as MRAS wants them; see "zmac and MRAS" below.
+Then lowcore (BOOT/SYS), SYSRES (SYS0), SYS1-SYS13, the library
 commands, SYS6-8 (from `../lsdos631/other/l631lib?.dat`) and the
 utilities, in the order of `BUILD631/JCL`. MRAS makes the `.EQU` files
 the modules include with XREF; `build.py` makes them from zmac's symbol
@@ -77,7 +78,6 @@ The switches in `../lsdos631/buildver.asm`:
 
     @HD     EQU  0   ; -1 to boot from the hard disk
     HDDIR   EQU  1   ; hard disk directory cylinder
-    @ZMAC   EQU  0   ; -1 for zmac (build.py sets it)
 
 With `@HD` on:
 
@@ -128,18 +128,26 @@ to go along with copies of LS-DOS.
 zmac and MRAS
 -------------
 
-Where zmac and MRAS differ the sources have both, chosen by `@ZMAC`:
-COM records (zmac has none), and LORG, which is PHASE/DEPHASE in zmac
-(FORMAT, BACKUP). Some spellings changed for both, with the same code:
-the `NUL` symbol (unused, an operator in zmac) commented out, the `LIST`
-label in `lblist.asm` renamed, `DC 11,-18` as `DC 11,0EEH`, `(IX+0FFH)`
-as `(IX-1)` in MEMDISK, a doubly defined `CLDATA$` in COM, and a `:` for
-a `;` in `sys3.asm`.
+The sources are not changed for zmac (only for the hard disk, by `@HD`).
+`build.py` runs zmac with `--mras` and, in its copies only:
+
+- puts `ZMPRE/ASM` (`PRELUDE` in `build.py`) in front of each module:
+  macros for what zmac lacks. `COM` (a comment record in the /CMD file)
+  does nothing; `LORG` (load the code elsewhere than it runs, in FORMAT
+  and BACKUP) is done with zmac's PHASE/DEPHASE, and `ORG` is a macro too
+  because MRAS keeps the load offset over a later ORG, which zmac does not
+  allow inside PHASE (`.ORG` stays the built-in one).
+- changes a few spellings zmac does not take, with the same code
+  (`EDITS` in `build.py`): the unused `NUL` symbol (an operator in zmac),
+  the `LIST` label in `lblist.asm`, `DC 11,-18` as `DC 11,0EEH`,
+  `(IX+0FFH)` as `(IX-1)` in MEMDISK, a doubly defined `CLDATA$` in COM,
+  and a `:` for a `;` in `sys3.asm`.
 
 Status
 ------
 
 The hard disk image works in the emulator of `test/` (and the browser
 version it comes from); it has not run in trs80gp or on real hardware
-yet. `ZGET2.BAT` has not been run; the MRAS build with the new switches
-off has not been run either (the zmac build of it matches the original).
+yet. `ZGET2.BAT` has not been run, nor the MRAS build with `@HD` off
+(with `@HD` off the sources are the original ones apart from the new
+switch and files).

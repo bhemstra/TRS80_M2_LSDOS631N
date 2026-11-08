@@ -12,8 +12,10 @@
 #		ready for ZGET2.BAT to put on a boot floppy
 #
 #	Without hd or floppy it builds both. The sources in ../lsdos631 are
-#	copied to work/<variant> with Unix line ends, and BUILDVER/ASM there
-#	gets @ZMAC (and for hd @HD) switched on. Then:
+#	copied to work/<variant> with Unix line ends; BUILDVER/ASM there gets
+#	@HD set for hd. The sources stay as MRAS wants them: in the copies a
+#	few spellings zmac does not take are changed (EDITS), and each module
+#	starts with PRELUDE, macros standing in for what zmac lacks. Then:
 #
 #	LOWCORE (BOOT/SYS), SYSRES (SYS0), SYS1-SYS13, the library commands
 #	and SYS6-SYS8 built from them as BLDLIBS/CMD does (mklib.py), the
@@ -31,6 +33,57 @@ sys.path.insert(0, HERE)
 import mklib, mklsdos
 
 ZMAC_URL = 'https://github.com/gp48k/zmac'
+
+# zmac stand-ins for MRAS, put in front of each module: COM (a comment
+# record in the /CMD file) does nothing, and LORG (load somewhere else
+# than the code runs) is done with PHASE/DEPHASE. MRAS keeps the load
+# offset over later ORGs, which zmac does not allow inside PHASE, so ORG
+# is a macro too (.ORG is still the built-in one). ZM$OFS is the load
+# address minus the run address.
+PRELUDE = '''; ZMPRE/ASM - zmac stand-ins for MRAS (written by build.py)
+ZM$OFS	DEFL	0
+ZM$PH	DEFL	0
+COM	MACRO	#QQS
+	ENDM
+ORG	MACRO	#QQA
+ZM$ADR	DEFL	#QQA
+	IF	ZM$PH
+	DEPHASE
+ZM$PH	DEFL	0
+	ENDIF
+	.ORG	ZM$ADR+ZM$OFS
+	IFNE	ZM$OFS,0
+	PHASE	ZM$ADR
+ZM$PH	DEFL	-1
+	ENDIF
+	ENDM
+LORG	MACRO	#QQL
+ZM$ADR	DEFL	#QQL
+ZM$RUN	DEFL	$
+	IF	ZM$PH
+	DEPHASE
+ZM$PH	DEFL	0
+	ENDIF
+ZM$OFS	DEFL	ZM$ADR-ZM$RUN
+	.ORG	ZM$ADR
+	IFNE	ZM$OFS,0
+	PHASE	ZM$RUN
+ZM$PH	DEFL	-1
+	ENDIF
+	ENDM
+'''
+
+# Spellings zmac does not take, changed in the copies (same code):
+# (file, old, new[, 'all'])
+EDITS = [
+	('svcequ.asm', "NUL\tEQU\t0\t", ";NUL\tEQU\t0\t"),	# NUL: an operator in zmac, not used
+	('sys3.asm', "\tELSE\t\t\t:<--> Before", "\tELSE\t\t\t;<--> Before"),	# a colon for a semicolon
+	('libcmds/lblist.asm', "\tCALL\tLIST\n", "\tCALL\tLISTF\n"),	# LIST is a pseudo-op in zmac
+	('libcmds/lblist.asm', "\nLIST\tCALL\tRESKFL", "\nLISTF\tCALL\tRESKFL"),
+	('utils/diskcopy.asm', "\tDC\t11,-18", "\tDC\t11,0EEH"),
+	('utils/memdisk.asm', "(IX+0FFH)", "(IX-1)", 'all'),
+	('utils/com.asm', "CLDATA$\tDB\t0", "\tDB\t0"),	# defined twice, same value
+]
 
 # Library commands (see ../lsdos631/other/l631lib?.dat)
 LIBCMDS = ('lbmemory lbdir lbcopy lblib lbremove lbrename lbdevice lbroute '
@@ -106,11 +159,24 @@ def prepare(dst, hd):
 				open(os.path.join(dst, rel, f.lower()), 'wb').write(t)
 	p = os.path.join(dst, 'buildver.asm')
 	s = open(p).read()
-	for sym, val in (('@ZMAC', -1), ('@HD', -1 if hd else 0)):
-		s, n = re.subn(r'^(%s\s+EQU\s+)\S+' % re.escape(sym), r'\g<1>%d' % val, s, flags=re.M)
-		if n != 1:
-			sys.exit('buildver.asm: no %s switch' % sym)
+	s, n = re.subn(r'^(@HD\s+EQU\s+)\S+', r'\g<1>%d' % (-1 if hd else 0), s, flags=re.M)
+	if n != 1:
+		sys.exit('buildver.asm: no @HD switch')
 	open(p, 'w').write(s)
+	for path, old, new, *all in EDITS:
+		p = os.path.join(dst, path)
+		s = open(p).read()
+		if old not in s:
+			sys.exit('%s: text to change not found: %r' % (path, old))
+		open(p, 'w').write(s.replace(old, new, -1 if all else 1))
+	# The modules start with the prelude (not the files they *GET)
+	mods = ['lowcore', 'sysres', 'hdboot2'] + ['sys%d' % n for n in (1, 2, 3, 4, 5, 9, 10, 11, 12, 13)]
+	mods = [('.', m) for m in mods] + [('libcmds', m) for m in LIBCMDS] + [('utils', m) for m, _ in UTILS]
+	for rel, m in mods:
+		p = os.path.join(dst, rel, m + '.asm')
+		s = open(p).read()
+		open(p, 'w').write('*GET\tZMPRE\n' + s)
+	open(os.path.join(dst, 'zmpre.asm'), 'w').write(PRELUDE)
 
 	def link(src, dstf):
 		if os.path.exists(dstf):
