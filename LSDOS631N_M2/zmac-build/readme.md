@@ -133,7 +133,10 @@ The sources are not changed for zmac (only for the hard disk, by `@HD`).
 
 - puts `ZMPRE/ASM` (`PRELUDE` in `build.py`) in front of each module:
   macros for what zmac lacks. `COM` (a comment record in the /CMD file)
-  does nothing; `LORG` (load the code elsewhere than it runs, in FORMAT
+  does nothing there; afterwards `build.py` puts the records in front of
+  the /CMD file as MRAS writes them: the module name (the output file's,
+  6 characters), then a comment record for each `COM` that was assembled
+  (it finds them in zmac's listing). `LORG` (load the code elsewhere than it runs, in FORMAT
   and BACKUP) is done with zmac's PHASE/DEPHASE, and `ORG` is a macro too
   because MRAS keeps the load offset over a later ORG, which zmac does not
   allow inside PHASE (`.ORG` stays the built-in one).
@@ -148,6 +151,11 @@ Status
 
 The hard disk image works in the emulator of `test/` (and the browser
 version it comes from); it has not run in trs80gp or on real hardware
-yet. `ZGET2.BAT` has not been run, nor the MRAS build with `@HD` off
-(with `@HD` off the sources are the original ones apart from the new
-switch and files).
+yet. `ZGET2.BAT` has not been run.
+
+MRAS 1.1a and XREF (from `../lsdos631/tools`), run under LS-DOS in that
+emulator on these sources, assemble LOWCORE, SYSRES, SYS1-SYS5,
+SYS9-SYS13, FORMAT and BACKUP without errors, with `@HD` off and on. The
+files load the same bytes as the zmac build and start with the same
+records, except BACKUP: zmac writes its 256 byte buffer HITBUF (at 4300H)
+as zeros, MRAS leaves it out.

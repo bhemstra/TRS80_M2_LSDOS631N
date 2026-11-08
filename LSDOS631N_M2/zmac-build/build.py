@@ -241,6 +241,24 @@ def assemble(zmac, d, name, equs):
 	sys.exit(name + ': too many duplicate symbols')
 
 
+def records(base, name):
+	"""Put the records MRAS starts a /CMD file with in front of base.cmd:
+	the module name (the output file's, 6 characters), then one comment
+	record for each COM zmac assembled (as a no-op macro; its listing shows
+	the ones that were not skipped)"""
+	name = name.upper()[:6].ljust(6).encode()
+	rec = bytes([0x05, len(name)]) + name
+	for line in open(base + '.lst', errors='replace'):
+		m = re.match(r"^\s*\d+:\s+-\s.*\sCOM\s+'<?(.*?)>?'\s*(;.*)?$", line)
+		if m:
+			t = m.group(1).encode('latin-1')
+			rec += bytes([0x1F, len(t)]) + t
+	cmd = base + '.cmd'
+	data = open(cmd, 'rb').read()
+	open(cmd, 'wb').write(rec + data)
+	return base
+
+
 def build(zmac, work, hd):
 	"""Assemble one variant, return the files: (LS-DOS name, path)"""
 	src = os.path.join(work, 'hd' if hd else 'floppy')
@@ -250,20 +268,20 @@ def build(zmac, work, hd):
 
 	lowcore = assemble(zmac, src, 'lowcore', [])
 	mkequ(lowcore + '.lst', equ('LOWCORE'))
-	sysres = assemble(zmac, src, 'sysres', [equ('LOWCORE')])
+	sysres = records(assemble(zmac, src, 'sysres', [equ('LOWCORE')]), 'SYS0')
 	mkequ(sysres + '.lst', equ('SYSRES'))
 	eqs = [equ('LOWCORE'), equ('SYSRES')]
 	files = [('BOOT/SYS', lowcore + '.cim'), ('SYS0/SYS', sysres + '.cmd')]
 	for n in (1, 2, 3, 4, 5):
-		files.append(('SYS%d/SYS' % n, assemble(zmac, src, 'sys%d' % n, eqs) + '.cmd'))
+		files.append(('SYS%d/SYS' % n, records(assemble(zmac, src, 'sys%d' % n, eqs), 'SYS%d' % n) + '.cmd'))
 	mkequ(os.path.join(src, 'out', 'sys5.lst'), equ('SYS5'))
 	eqs.append(equ('SYS5'))
 	for n in (9, 10, 11, 12, 13):
-		files.append(('SYS%d/SYS' % n, assemble(zmac, src, 'sys%d' % n, eqs) + '.cmd'))
+		files.append(('SYS%d/SYS' % n, records(assemble(zmac, src, 'sys%d' % n, eqs), 'SYS%d' % n) + '.cmd'))
 
 	lib = os.path.join(src, 'libcmds')
 	for n in LIBCMDS:
-		assemble(zmac, lib, n, eqs)
+		records(assemble(zmac, lib, n, eqs), n)
 	for n in (6, 7, 8):
 		f = os.path.join(src, 'out', 'sys%d.cmd' % n)
 		mklib.build(f, os.path.join(SRC, 'other', 'l631lib%d.dat' % n), os.path.join(lib, 'out'))
@@ -271,7 +289,7 @@ def build(zmac, work, hd):
 	ut = os.path.join(src, 'utils')
 	for n, fname in UTILS:
 		if not (hd and n in HD_SKIP):
-			files.append((fname, assemble(zmac, ut, n, eqs) + '.cmd'))
+			files.append((fname, records(assemble(zmac, ut, n, eqs), fname.split('/')[0]) + '.cmd'))
 	if hd:
 		files.append(('HDBOOT2', assemble(zmac, src, 'hdboot2', [equ('LOWCORE')]) + '.cim'))
 	return files
@@ -281,6 +299,8 @@ def build(zmac, work, hd):
 def hostname(lsname, path):
 	if lsname == 'BOOT/SYS':
 		return 'lowcore.cim'
+	if lsname == 'HDBOOT2':
+		return 'hdboot2.cim'
 	n, _, e = lsname.lower().partition('/')
 	return n + '.' + ('cmd' if e == 'sys' else e)
 
