@@ -31,6 +31,12 @@ compiler; on Windows it uses the `zmac.exe` from that clone).
     python3 build.py            # both
     python3 build.py hd         # only the hard disk image
     python3 build.py floppy     # only the floppy system
+    python3 build.py --model 4  # the Model 4 floppy system, in out/m4/floppy
+
+The Model 4 build sets `@MOD4` and clears `@MOD2` in its copy of
+`BUILDVER/ASM`; it makes BOOT/SYS (`lowcore.cim`), SYS0-SYS13 and all
+utilities of `BUILDUTL/JCL` (TAPE100 too). The hard disk boot (`@HD`)
+is for the Model II only.
 
 The sources are copied to `work/hd` or `work/floppy` with Unix line ends,
 and for the hard disk `BUILDVER/ASM` there gets `@HD` set to -1. The
@@ -144,7 +150,15 @@ The sources are not changed for zmac (only for the hard disk, by `@HD`).
   (`EDITS` in `build.py`): the unused `NUL` symbol (an operator in zmac),
   the `LIST` label in `lblist.asm`, `DC 11,-18` as `DC 11,0EEH`,
   `(IX+0FFH)` as `(IX-1)` in MEMDISK, a doubly defined `CLDATA$` in COM,
-  and a `:` for a `;` in `sys3.asm`.
+  and a `:` for a `;` in `sys3.asm`; for the Model 4 `DB 0-SNDOFF` (a
+  negative byte) in `sound.asm`.
+- writes two character constants as MRAS reads them: MRAS takes `'IK'`
+  as `'I'*256+'K'`, zmac the other way round, so `LD DE,'IK'` becomes
+  `LD DE,'I'<+8!'K'` (in SYSINIT for the Model 4, COM, FORMS, HELP,
+  MEMDISK and seven library commands).
+- makes `lowcore.cim` as MRAS `-CI` does: the bytes in the order they
+  are assembled, DS space filled but nothing for an ORG, so the Model 4
+  boot sector (ORG 4300H) follows page 2.
 
 Status
 ------
@@ -153,9 +167,18 @@ The hard disk image works in the emulator of `test/` (and the browser
 version it comes from); it has not run in trs80gp or on real hardware
 yet. `ZGET2.BAT` has not been run.
 
-MRAS 1.1a and XREF (from `../lsdos631/tools`), run under LS-DOS in that
-emulator on these sources, assemble LOWCORE, SYSRES, SYS1-SYS5,
-SYS9-SYS13, FORMAT and BACKUP without errors, with `@HD` off and on. The
-files load the same bytes as the zmac build and start with the same
-records, except BACKUP: zmac writes its 256 byte buffer HITBUF (at 4300H)
-as zeros, MRAS leaves it out.
+MRAS 1.1a, XREF and BLDLIBS (from `../lsdos631/tools` and `other`), run
+under LS-DOS in that emulator on these sources, build the same set for
+the Model II (`@HD` off and on) and the Model 4: LOWCORE, SYS0-SYS13, the
+29 library commands, SYS6-SYS8 and the utilities. Everything matches the
+zmac build byte for byte (BOOT/SYS and the libraries as files, the /CMD
+files in what they load and their records), except BACKUP: zmac writes
+its 256 byte buffer HITBUF as zeros, MRAS leaves it out.
+
+For the Model 4, MRAS itself fails on SYSRES (4 errors): the local labels
+`$?1` in `sound.asm` become `$A1`, which LOWCORE/EQU (made by XREF) has
+too, so a branch goes wrong and the end of SYS0 is lost. With those
+labels renamed (for the test only) MRAS makes the same SYS0 as zmac.
+zmac is not affected: `build.py` leaves the `$` labels out of the
+`.EQU` files. (`utils/conv2.asm` has LF line ends where the others have
+CR; IMPORT2 -N takes care of that in the MRAS flow.)

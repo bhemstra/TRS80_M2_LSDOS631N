@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 #
-#	build.py [hd] [floppy] [--zmac ZMAC] [--out DIR]
+#	build.py [hd] [floppy] [--model 2|4] [--zmac ZMAC] [--out DIR]
 #
-#	Assemble LS-DOS 6.3.1 for the Model II with zmac (George Phillips,
+#	Assemble LS-DOS 6.3.1 for the Model II (or with --model 4 the
+#	Model 4, floppy only: out/m4/floppy) with zmac (George Phillips,
 #	https://github.com/gp48k/zmac) instead of MRAS under emulation.
 #
 #	hd	@HD on: out/hd/lsdos631n-hd.hdv, a hard disk image that boots
@@ -83,7 +84,13 @@ EDITS = [
 	('utils/diskcopy.asm', "\tDC\t11,-18", "\tDC\t11,0EEH"),
 	('utils/memdisk.asm', "(IX+0FFH)", "(IX-1)", 'all'),
 	('utils/com.asm', "CLDATA$\tDB\t0", "\tDB\t0"),	# defined twice, same value
+	('sound.asm', "\tDB\t0-SNDOFF", "\tDB\t0-SNDOFF&0FFH"),	# Model 4: a negative byte
 ]
+
+# MRAS takes a two character constant as first character * 256 + second
+# (LD DE,'IK' gives E = 'K', D = 'I'), zmac the other way round: spelled
+# out as 'I'<+8!'K' in the copies
+CHAR2 = re.compile(r"(\bLD\s+(?:BC|DE|HL|SP|IX|IY)\s*,\s*)'([^'])([^'])'")
 
 # Library commands (see ../lsdos631/other/l631lib?.dat)
 LIBCMDS = ('lbmemory lbdir lbcopy lblib lbremove lbrename lbdevice lbroute '
@@ -143,7 +150,7 @@ def find_zmac(arg, work):
 	return z
 
 
-def prepare(dst, hd):
+def prepare(dst, hd, model=2):
 	"""Copy the sources with LF line ends and set the switches. zmac looks
 	for *GET NAME as NAME.asm, so each file also gets an upper case name
 	(on a case sensitive file system), and libcmds/ and utils/ see the
@@ -162,6 +169,9 @@ def prepare(dst, hd):
 	s, n = re.subn(r'^(@HD\s+EQU\s+)\S+', r'\g<1>%d' % (-1 if hd else 0), s, flags=re.M)
 	if n != 1:
 		sys.exit('buildver.asm: no @HD switch')
+	if model == 4:
+		s = re.sub(r'^(@MOD2\s+EQU\s+)\S+', r'\g<1>0', s, flags=re.M)
+		s = re.sub(r'^(@MOD4\s+EQU\s+)\S+', r'\g<1>-1', s, flags=re.M)
 	open(p, 'w').write(s)
 	for path, old, new, *all in EDITS:
 		p = os.path.join(dst, path)
@@ -169,9 +179,18 @@ def prepare(dst, hd):
 		if old not in s:
 			sys.exit('%s: text to change not found: %r' % (path, old))
 		open(p, 'w').write(s.replace(old, new, -1 if all else 1))
+	for rel in ('.', 'libcmds', 'utils'):
+		for f in os.listdir(os.path.join(dst, rel)):
+			p = os.path.join(dst, rel, f)
+			if not f.endswith('.asm') or not os.path.isfile(p):
+				continue
+			s = open(p).read()
+			t = CHAR2.sub(r"\1'\2'<+8!'\3'", s)
+			if t != s:
+				open(p, 'w').write(t)
 	# The modules start with the prelude (not the files they *GET)
 	mods = ['lowcore', 'sysres', 'hdboot2'] + ['sys%d' % n for n in (1, 2, 3, 4, 5, 9, 10, 11, 12, 13)]
-	mods = [('.', m) for m in mods] + [('libcmds', m) for m in LIBCMDS] + [('utils', m) for m, _ in UTILS]
+	mods = [('.', m) for m in mods] + [('libcmds', m) for m in LIBCMDS] + [('utils', m) for m, _ in UTILS] + [('utils', 'tape100')]
 	for rel, m in mods:
 		p = os.path.join(dst, rel, m + '.asm')
 		s = open(p).read()
@@ -241,6 +260,34 @@ def assemble(zmac, d, name, equs):
 	sys.exit(name + ': too many duplicate symbols')
 
 
+def mrascim(base):
+	"""Make base.cim as MRAS -CI does: the bytes in the order they were
+	assembled, with DS space filled with zeros but nothing for an ORG (the
+	Model 4 boot sector at 4300H sits between page 2 and page 3). From the
+	load blocks of base.cmd and the ORG addresses in base.lst."""
+	orgs = set()
+	for line in open(base + '.lst', errors='replace'):
+		m = re.match(r'^\s*\d+:\s+-\s+([0-9A-F]{4})\s+\.ORG\b', line)
+		if m:
+			orgs.add(int(m.group(1), 16))
+	d = open(base + '.cmd', 'rb').read()
+	out, i, end = bytearray(), 0, None
+	while i < len(d) and d[i] != 2:
+		t, n = d[i], d[i + 1]
+		if t != 1:
+			i += 2 + (n or 256)
+			continue
+		n = n + 256 if n < 3 else n
+		a = d[i + 2] | d[i + 3] << 8
+		if end is not None and a > end and a not in orgs:
+			out += bytes(a - end)			# DS
+		out += d[i + 4:i + 2 + n]
+		end = a + n - 2
+		i += 2 + n
+	open(base + '.cim', 'wb').write(out)
+	return base
+
+
 def records(base, name):
 	"""Put the records MRAS starts a /CMD file with in front of base.cmd:
 	the module name (the output file's, 6 characters), then one comment
@@ -259,14 +306,14 @@ def records(base, name):
 	return base
 
 
-def build(zmac, work, hd):
+def build(zmac, work, hd, model=2):
 	"""Assemble one variant, return the files: (LS-DOS name, path)"""
-	src = os.path.join(work, 'hd' if hd else 'floppy')
-	prepare(src, hd)
+	src = os.path.join(work, ('hd' if hd else 'floppy') + ('-m4' if model == 4 else ''))
+	prepare(src, hd, model)
 	equ = lambda n: os.path.join(src, 'equ', n + '.EQU')
 	os.makedirs(os.path.join(src, 'equ'))
 
-	lowcore = assemble(zmac, src, 'lowcore', [])
+	lowcore = mrascim(assemble(zmac, src, 'lowcore', []))
 	mkequ(lowcore + '.lst', equ('LOWCORE'))
 	sysres = records(assemble(zmac, src, 'sysres', [equ('LOWCORE')]), 'SYS0')
 	mkequ(sysres + '.lst', equ('SYSRES'))
@@ -287,7 +334,7 @@ def build(zmac, work, hd):
 		mklib.build(f, os.path.join(SRC, 'other', 'l631lib%d.dat' % n), os.path.join(lib, 'out'))
 		files.append(('SYS%d/SYS' % n, f))
 	ut = os.path.join(src, 'utils')
-	for n, fname in UTILS:
+	for n, fname in UTILS + ([('tape100', 'TAPE100/CMD')] if model == 4 else []):
 		if not (hd and n in HD_SKIP):
 			files.append((fname, records(assemble(zmac, ut, n, eqs), fname.split('/')[0]) + '.cmd'))
 	if hd:
@@ -306,24 +353,32 @@ def hostname(lsname, path):
 
 
 def main():
-	ap = argparse.ArgumentParser(description='Build LS-DOS 6.3.1 for the Model II with zmac')
-	ap.add_argument('variant', nargs='*', choices=['hd', 'floppy'], help='default: both')
+	ap = argparse.ArgumentParser(description='Build LS-DOS 6.3.1 for the Model II (or 4) with zmac')
+	ap.add_argument('variant', nargs='*', choices=['hd', 'floppy'], help='default: both (Model 4: floppy)')
+	ap.add_argument('--model', type=int, choices=[2, 4], default=2)
 	ap.add_argument('--zmac', help='zmac binary')
 	ap.add_argument('--out', default=os.path.join(HERE, 'out'))
 	args = ap.parse_args()
-	variants = args.variant or ['hd', 'floppy']
+	variants = args.variant or (['hd', 'floppy'] if args.model == 2 else ['floppy'])
+	if args.model == 4 and 'hd' in variants:
+		sys.exit('The hard disk boot (@HD) is for the Model II only')
 	work = os.path.join(HERE, 'work')
 	os.makedirs(work, exist_ok=True)
 	zmac = find_zmac(args.zmac, work)
 
 	for v in variants:
-		files = build(zmac, work, v == 'hd')
+		files = build(zmac, work, v == 'hd', args.model)
 		out = os.path.join(args.out, v if v == 'floppy' else os.path.join('hd', 'files'))
+		if args.model == 4:
+			out = os.path.join(args.out, 'm4', v)
 		if os.path.isdir(out):
 			shutil.rmtree(out)
 		os.makedirs(out)
 		for lsname, path in files:
 			shutil.copy(path, os.path.join(out, hostname(lsname, path)))
+		if args.model == 4:
+			print('Model 4 floppy: files in', out)
+			continue
 		if v == 'floppy':
 			# The job that puts these on a floppy, see ZGET2.BAT
 			t = open(os.path.join(HERE, 'zget2.jcl'), 'rb').read()
