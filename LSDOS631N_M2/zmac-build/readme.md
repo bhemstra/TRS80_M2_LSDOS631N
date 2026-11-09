@@ -96,11 +96,15 @@ With `@HD` on:
 - `lowcore.asm`: DCT 0 is the hard disk (`hddvr2.asm`, for both models,
   put after the floppy driver in the space for drivers below 1200H); the
   physical floppy drives follow from `:1` (Model II: 0 and 1 as `:1` and
-  `:2`; Model 4: 0-2 as `:1`-`:3`).
+  `:2`; Model 4: 0 and 1 as `:1` and `:2`).
 - `sysinit4.asm`: SYSINIT leaves DCT 0 alone instead of setting it up
   from what the floppy boot sector left.
 - `hdboot2.asm` (Model II) or `hdboot4.asm` (Model 4) is the loader the
   boot ROM starts.
+- `utils/format2.asm` (Model 4): FORMAT takes the default cylinder counts
+  of the drives from the DCTs at 0470H as they are on drive 0 cylinder 0.
+  On a floppy that is sector 2; on the hard disk the boot area holds the
+  memory from 0000H on, so it is sector 6.
 
 The drive has 101 cylinders, 8 heads and 32 sectors of 512 bytes per
 track (13 MB, the trs80gp layout). Each 256 byte LS-DOS sector is the
@@ -151,7 +155,9 @@ through the heads of cylinder 0:
 The loader does what the Fuzix Model 4 hard disk loader does that runs on
 a FreHD: reset the controller, memory map 86H, external I/O bus on (port
 ECH), controller enable; then it loads the sectors, sets the disk hooks,
-OPREG$ and the CRTC as the floppy BOOT/SYS does, and starts SYSINIT. It
+the jump at the NMI vector 66H (the floppy driver ends its transfers with
+an NMI), OPREG$ and the CRTC as the floppy BOOT/SYS does, and starts
+SYSINIT. It
 fits in one sector and makes no CALLs.
 
 The driver does read (9), verify (10), write (13) and write system sector
