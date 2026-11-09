@@ -175,10 +175,9 @@ zmac build byte for byte (BOOT/SYS and the libraries as files, the /CMD
 files in what they load and their records), except BACKUP: zmac writes
 its 256 byte buffer HITBUF as zeros, MRAS leaves it out.
 
-For the Model 4, MRAS itself fails on SYSRES (4 errors): the local labels
-`$?1` in `sound.asm` become `$A1`, which LOWCORE/EQU (made by XREF) has
-too, so a branch goes wrong and the end of SYS0 is lost. With those
-labels renamed (for the test only) MRAS makes the same SYS0 as zmac.
-zmac is not affected: `build.py` leaves the `$` labels out of the
-`.EQU` files. (`utils/conv2.asm` has LF line ends where the others have
+For the Model 4, MRAS used to fail on SYSRES: the local labels `$?1`-`$?3`
+in `sound.asm` became `$A1`-`$A3`, which LOWCORE/EQU (made by XREF) has
+too, so a branch went wrong and the end of SYS0 was lost. They are now
+SNDGO, SNDNOT and SNDTON (same code; zmac was not affected, as `build.py`
+leaves the `$` labels out of the `.EQU` files). (`utils/conv2.asm` has LF line ends where the others have
 CR; IMPORT2 -N takes care of that in the MRAS flow.)
