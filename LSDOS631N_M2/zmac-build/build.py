@@ -3,7 +3,7 @@
 #	build.py [hd] [floppy] [--model 2|4] [--zmac ZMAC] [--out DIR]
 #
 #	Assemble LS-DOS 6.3.1 for the Model II (or with --model 4 the
-#	Model 4, floppy only: out/m4/floppy) with zmac (George Phillips,
+#	Model 4, in out/m4) with zmac (George Phillips,
 #	https://github.com/gp48k/zmac) instead of MRAS under emulation.
 #
 #	hd	@HD on: out/hd/lsdos631n-hd.hdv, a hard disk image that boots
@@ -189,7 +189,7 @@ def prepare(dst, hd, model=2):
 			if t != s:
 				open(p, 'w').write(t)
 	# The modules start with the prelude (not the files they *GET)
-	mods = ['lowcore', 'sysres', 'hdboot2'] + ['sys%d' % n for n in (1, 2, 3, 4, 5, 9, 10, 11, 12, 13)]
+	mods = ['lowcore', 'sysres', 'hdboot2', 'hdboot4'] + ['sys%d' % n for n in (1, 2, 3, 4, 5, 9, 10, 11, 12, 13)]
 	mods = [('.', m) for m in mods] + [('libcmds', m) for m in LIBCMDS] + [('utils', m) for m, _ in UTILS] + [('utils', 'tape100')]
 	for rel, m in mods:
 		p = os.path.join(dst, rel, m + '.asm')
@@ -335,10 +335,12 @@ def build(zmac, work, hd, model=2):
 		files.append(('SYS%d/SYS' % n, f))
 	ut = os.path.join(src, 'utils')
 	for n, fname in UTILS + ([('tape100', 'TAPE100/CMD')] if model == 4 else []):
-		if not (hd and n in HD_SKIP):
+		if not (hd and model == 2 and n in HD_SKIP):
 			files.append((fname, records(assemble(zmac, ut, n, eqs), fname.split('/')[0]) + '.cmd'))
 	if hd:
-		files.append(('HDBOOT2', assemble(zmac, src, 'hdboot2', [equ('LOWCORE')]) + '.cim'))
+		files.append(('LOWCORE', lowcore + '.cmd'))	# the hard disk loads its blocks
+		b = 'hdboot2' if model == 2 else 'hdboot4'
+		files.append((b.upper(), assemble(zmac, src, b, [equ('LOWCORE')]) + '.cim'))
 	return files
 
 
@@ -346,37 +348,37 @@ def build(zmac, work, hd, model=2):
 def hostname(lsname, path):
 	if lsname == 'BOOT/SYS':
 		return 'lowcore.cim'
-	if lsname == 'HDBOOT2':
-		return 'hdboot2.cim'
+	if lsname in ('HDBOOT2', 'HDBOOT4'):
+		return lsname.lower() + '.cim'
+	if lsname == 'LOWCORE':
+		return 'lowcore.cmd'
 	n, _, e = lsname.lower().partition('/')
 	return n + '.' + ('cmd' if e == 'sys' else e)
 
 
 def main():
 	ap = argparse.ArgumentParser(description='Build LS-DOS 6.3.1 for the Model II (or 4) with zmac')
-	ap.add_argument('variant', nargs='*', choices=['hd', 'floppy'], help='default: both (Model 4: floppy)')
+	ap.add_argument('variant', nargs='*', choices=['hd', 'floppy'], help='default: both')
 	ap.add_argument('--model', type=int, choices=[2, 4], default=2)
 	ap.add_argument('--zmac', help='zmac binary')
 	ap.add_argument('--out', default=os.path.join(HERE, 'out'))
 	args = ap.parse_args()
-	variants = args.variant or (['hd', 'floppy'] if args.model == 2 else ['floppy'])
-	if args.model == 4 and 'hd' in variants:
-		sys.exit('The hard disk boot (@HD) is for the Model II only')
+	variants = args.variant or ['hd', 'floppy']
+	m4 = args.model == 4
 	work = os.path.join(HERE, 'work')
 	os.makedirs(work, exist_ok=True)
 	zmac = find_zmac(args.zmac, work)
 
 	for v in variants:
 		files = build(zmac, work, v == 'hd', args.model)
-		out = os.path.join(args.out, v if v == 'floppy' else os.path.join('hd', 'files'))
-		if args.model == 4:
-			out = os.path.join(args.out, 'm4', v)
+		base = os.path.join(args.out, 'm4') if m4 else args.out
+		out = os.path.join(base, v if v == 'floppy' else os.path.join('hd', 'files'))
 		if os.path.isdir(out):
 			shutil.rmtree(out)
 		os.makedirs(out)
 		for lsname, path in files:
 			shutil.copy(path, os.path.join(out, hostname(lsname, path)))
-		if args.model == 4:
+		if v == 'floppy' and m4:
 			print('Model 4 floppy: files in', out)
 			continue
 		if v == 'floppy':
@@ -388,10 +390,11 @@ def main():
 		notice = os.path.join(out, 'notice.txt')
 		open(notice, 'wb').write(NOTICE.replace('\n', '\r').encode())
 		d = dict(files)
-		ondisk = [(n, p) for n, p in files if n not in ('BOOT/SYS', 'SYS0/SYS', 'HDBOOT2')]
-		img = os.path.join(args.out, 'hd', 'lsdos631n-hd.hdv')
-		mklsdos.build(img, d['BOOT/SYS'], d['SYS0/SYS'], d['HDBOOT2'],
-			[('SYS0/SYS', d['SYS0/SYS'])] + ondisk + [('NOTICE/TXT', notice)])
+		boot = 'HDBOOT4' if m4 else 'HDBOOT2'
+		ondisk = [(n, p) for n, p in files if n not in ('BOOT/SYS', 'SYS0/SYS', 'LOWCORE', boot)]
+		img = os.path.join(base, 'hd', 'lsdos631n-m4-hd.hdv' if m4 else 'lsdos631n-hd.hdv')
+		mklsdos.build(img, d['LOWCORE'], d['SYS0/SYS'], d[boot],
+			[('SYS0/SYS', d['SYS0/SYS'])] + ondisk + [('NOTICE/TXT', notice)], args.model)
 		print('hd: image', img)
 
 

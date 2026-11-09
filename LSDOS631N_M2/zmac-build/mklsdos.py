@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 #
-#	mklsdos.py out.hdv lowcore.cim sys0.cmd hdboot2.cim [NAME/EXT=file ...]
+#	mklsdos.py [-4] out.hdv lowcore.cmd sys0.cmd hdboot.cim [NAME/EXT=file ...]
 #
 #	(build.py calls build() with the same arguments.)
 #
-#	Build a TRS-80 Model II hard disk image (.hdv, as trs80gp and FreHD
-#	use them) that boots LS-DOS 6.3.1 from the hard disk boot ROM.
+#	Build a TRS-80 Model II (or with -4 Model 4) hard disk image (.hdv,
+#	as trs80gp, xtrs and FreHD use them) that boots LS-DOS 6.3.1 from the
+#	hard disk boot ROM (Model II), or from the Model 4P boot ROM or the
+#	FreHD auto boot ROM (Model 4).
 #
-#	The drive: 101 cylinders, 8 heads, 32 sectors of 512 bytes. LS-DOS
-#	(see HDDVR2/ASM) sees 202 cylinders of 4 heads x 32 sectors of 256
-#	bytes, each the first half of a physical sector; 8 granules of 16
+#	The drive: 101 cylinders, 8 heads, 32 sectors per track, of 512
+#	bytes on the Model II, 256 on the Model 4. LS-DOS (see HDDVR2/ASM)
+#	sees 202 cylinders of 4 heads x 32 sectors of 256 bytes (on the
+#	Model II each the first half of a physical sector); 8 granules of 16
 #	sectors per cylinder. Cylinder 0 is the boot area (BOOT/SYS),
 #	cylinder 1 the directory.
 #
@@ -19,6 +22,13 @@
 import sys, time
 
 PCYL, HEADS, SPT, PSEC = 101, 8, 32, 512
+MODEL = 2
+
+
+def set_model(m):
+	"""Model II (512 byte sectors) or Model 4 (256)"""
+	global MODEL, PSEC
+	MODEL, PSEC = m, 512 if m == 2 else 256
 LCYL = 2 * PCYL				# LS-DOS cylinders
 LSPC = 128				# LS-DOS sectors per cylinder
 GPC, SPG = 8, 16			# granules per cylinder, sectors per granule
@@ -101,37 +111,52 @@ def header():
 	512 byte sectors (byte 8), the geometry in bytes 28-31"""
 	h = bytearray(256)
 	h[0:6] = bytes([0x56, 0xCB, 0x10, 0x94, 0x01, 0x04])
-	h[8] = 0x0A
+	if MODEL == 2:
+		h[8] = 0x0A
+	else:
+		h[8], h[11] = 0x01, 0x02	# FreHD: auto boot, native boot
 	h[10], h[12], h[13], h[14] = 0x42, 0x05, 0x15, 0x73
 	h[28], h[30], h[31] = PCYL, HEADS, 1	# as the Fuzix hard2-0.hdv
 	h[32:40] = b'xtrshard'
-	h[64:76] = b'lsdos631n-hd'
+	h[64:76] = b'lsdos631n-hd' if MODEL == 2 else b'lsdos631n-m4'
 	return h
 
 
-def build(out, cimf, sys0f, bootf, files):
+def build(out, lowcoref, sys0f, bootf, files, model=2):
+	set_model(model)
 	img = header() + bytes(PCYL * HEADS * SPT * PSEC)
 
-	# Boot area: the loader, memory 0000-23FF and the video memory
+	# Boot area: the loader, memory 0000-23FF (lowcore, then SYS0 on top)
+	# and the video memory
 	mem = bytearray(0x2400)
-	cim = open(cimf, 'rb').read()
-	mem[0x200:0x200 + len(cim)] = cim[:0x2400 - 0x200]
 	video = bytearray(b' ' * 0x800)
+	lblocks, _ = cmdblocks(open(lowcoref, 'rb').read())
 	blocks, entry = cmdblocks(open(sys0f, 'rb').read())
 	assert entry == 0x1E00, 'SYS0 entry %04X' % entry
-	for a, d in blocks:
+	for a, d in lblocks + blocks:
 		if a + len(d) <= 0x2400:
 			mem[a:a + len(d)] = d
 		elif a >= 0xF800:
 			video[a - 0xF800:a - 0xF800 + len(d)] = d
+		elif a == 0x4300 and model == 4:
+			pass				# the floppy boot sector
 		else:
-			sys.exit('SYS0 block at %04X does not fit' % a)
+			sys.exit('block at %04X does not fit' % a)
 	boot = open(bootf, 'rb').read()
-	assert len(boot) <= 512
-	img[poff(0, 0, 8):poff(0, 0, 8) + len(boot)] = boot
-	img[poff(0, 0, 9):poff(0, 0, 9) + len(mem)] = mem
-	img[poff(0, 0, 27):poff(0, 0, 27) + len(video)] = video
-	img[poff(0, 0, 1) + 2] = DIRCYL		# where @RDSSC looks
+	if model == 2:
+		assert len(boot) <= 512
+		img[poff(0, 0, 8):poff(0, 0, 8) + len(boot)] = boot
+		img[poff(0, 0, 9):poff(0, 0, 9) + len(mem)] = mem
+		img[poff(0, 0, 27):poff(0, 0, 27) + len(video)] = video
+		img[poff(0, 0, 1) + 2] = DIRCYL		# where @RDSSC looks
+	else:
+		# sector 1 the loader, then 2-37 memory, 38-45 video, counted
+		# on through the heads of cylinder 0
+		assert len(boot) <= 256 and boot[2] == DIRCYL
+		data = boot.ljust(256, b'\0') + mem + video
+		for i in range(len(data) // 256):
+			o = poff(0, (i + 1) // SPT, (i + 1) % SPT)
+			img[o:o + 256] = data[i * 256:(i + 1) * 256]
 
 	# Directory
 	gat = bytearray(256)
@@ -214,4 +239,7 @@ def build(out, cimf, sys0f, bootf, files):
 
 
 if __name__ == '__main__':
-	build(*sys.argv[1:5], [a.split('=', 1) for a in sys.argv[5:]])
+	a = sys.argv[1:]
+	m = 4 if a[0] == '-4' else 2
+	a = a[1:] if m == 4 else a
+	build(*a[:4], [x.split('=', 1) for x in a[4:]], m)

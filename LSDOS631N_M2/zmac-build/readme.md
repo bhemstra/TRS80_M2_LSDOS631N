@@ -2,7 +2,7 @@ Building LS-DOS with zmac
 =========================
 
 This directory contains the files needed to build LS-DOS 6.3.1 level N
-for the Model II from the sources in `../lsdos631` with
+for the Model II (and the Model 4) from the sources in `../lsdos631` with
 [zmac](https://github.com/gp48k/zmac) (George Phillips) on the host,
 instead of MRAS inside trs80gp. It makes:
 
@@ -12,6 +12,10 @@ instead of MRAS inside trs80gp. It makes:
 - **the normal floppy system**: its files in `out/floppy`, which
   `ZGET2.BAT` puts on a boot floppy in trs80gp, like `GET2_NEW.BAT` does
   with the MRAS build.
+- with `--model 4`, the same for the **Model 4**: a hard disk image
+  `out/m4/hd/lsdos631n-m4-hd.hdv` that a Model 4P, or a Model 4 with the
+  FreHD auto boot ROM, boots from (drive `:0` the hard disk, the floppy
+  drives `:1` to `:3`), and the floppy system's files in `out/m4/floppy`.
 
 | File          | Contents                                                     |
 |---------------|--------------------------------------------------------------|
@@ -19,7 +23,7 @@ instead of MRAS inside trs80gp. It makes:
 | `mklib.py`    | builds SYS6/SYS7/SYS8 from the library commands, as BLDLIBS/CMD does |
 | `mklsdos.py`  | writes the hard disk image: boot area, GAT, HIT, directory, files |
 | `ZGET2.BAT`, `zget2.jcl` | put the floppy build on `L631NEW2.DSK` in trs80gp |
-| `test/`       | `test.mjs` boots the hard disk image in a Model II emulator under Node |
+| `test/`       | `test.mjs` boots the Model II hard disk image in a Model II emulator under Node (`m2.js`); `test4.mjs` the Model 4 one in a minimal Model 4 (`m4.js`) |
 
 Building
 --------
@@ -31,12 +35,11 @@ compiler; on Windows it uses the `zmac.exe` from that clone).
     python3 build.py            # both
     python3 build.py hd         # only the hard disk image
     python3 build.py floppy     # only the floppy system
-    python3 build.py --model 4  # the Model 4 floppy system, in out/m4/floppy
+    python3 build.py --model 4  # the same for the Model 4, in out/m4
 
 The Model 4 build sets `@MOD4` and clears `@MOD2` in its copy of
 `BUILDVER/ASM`; it makes BOOT/SYS (`lowcore.cim`), SYS0-SYS13 and all
-utilities of `BUILDUTL/JCL` (TAPE100 too). The hard disk boot (`@HD`)
-is for the Model II only.
+utilities of `BUILDUTL/JCL` (TAPE100 too).
 
 The sources are copied to `work/hd` or `work/floppy` with Unix line ends,
 and for the hard disk `BUILDVER/ASM` there gets `@HD` set to -1. The
@@ -52,12 +55,15 @@ The floppy build gives the files the MRAS build makes (`lowcore.cim`,
 utilities); with `@HD` off they are byte for byte what zmac makes of the
 unchanged GmEsoft sources.
 
-Testing the hard disk image:
+Testing the hard disk images:
 
     node test/test.mjs
+    node test/test4.mjs
 
-It boots the image, answers the date and time, checks the drives (DEVICE,
-FREE), writes files with DUMP and COPY, boots again and reads them back.
+They boot the image, answer the date and time, check the drives (DEVICE,
+FREE), write files with DUMP and COPY, boot again and read them back.
+`test/m4.js` is just enough of a Model 4 for that: memory maps, keyboard
+matrix, video, the clock interrupt and the hard disk; no floppy drives.
 
 Floppy disks
 ------------
@@ -87,12 +93,14 @@ The switches in `../lsdos631/buildver.asm`:
 
 With `@HD` on:
 
-- `lowcore.asm`: DCT 0 is the hard disk (`hddvr2.asm`, put after the
-  floppy driver in the space for drivers below 1200H), physical floppy
-  drives 0 and 1 are `:1` and `:2`.
+- `lowcore.asm`: DCT 0 is the hard disk (`hddvr2.asm`, for both models,
+  put after the floppy driver in the space for drivers below 1200H); the
+  physical floppy drives follow from `:1` (Model II: 0 and 1 as `:1` and
+  `:2`; Model 4: 0-2 as `:1`-`:3`).
 - `sysinit4.asm`: SYSINIT leaves DCT 0 alone instead of setting it up
   from what the floppy boot sector left.
-- `hdboot2.asm` is the loader the boot ROM starts.
+- `hdboot2.asm` (Model II) or `hdboot4.asm` (Model 4) is the loader the
+  boot ROM starts.
 
 The drive has 101 cylinders, 8 heads and 32 sectors of 512 bytes per
 track (13 MB, the trs80gp layout). Each 256 byte LS-DOS sector is the
@@ -121,6 +129,30 @@ until one starts with `/* END BOOT */` and jumps past it. The loader moves
 to 7E00H, turns the ROM off, works out whether the drive numbers its
 sectors from 0 (trs80gp) or 1, loads the memory image, tells the driver
 the numbering and starts SYSINIT at 1E00H.
+
+### Model 4
+
+The Model 4 drive has 256 byte sectors (8 heads, 32 sectors per track,
+101 cylinders, 6.6 MB), so each LS-DOS sector is a whole one; the LS-DOS
+layout is the same (202 cylinders of 4 heads, cylinder 0 BOOT/SYS,
+cylinder 1 the directory). The image header has the FreHD auto boot flags
+(byte 8 = 01H, byte 11 = 02H).
+
+The Model 4P boot ROM and the FreHD auto boot ROM read cylinder 0 head 0
+sector 1 into 4300H and jump to it. Counted from head 0 sector 0 on
+through the heads of cylinder 0:
+
+| Sector | Contents                                                      |
+|--------|---------------------------------------------------------------|
+| 1      | `hdboot4.asm` (byte 2 is the directory cylinder, as in a floppy boot sector) |
+| 2-37   | memory 0000H-23FFH: lowcore with SYS0 loaded on top           |
+| 38-45  | video memory F800H-FFFFH                                      |
+
+The loader does what the Fuzix Model 4 hard disk loader does that runs on
+a FreHD: reset the controller, memory map 86H, external I/O bus on (port
+ECH), controller enable; then it loads the sectors, sets the disk hooks,
+OPREG$ and the CRTC as the floppy BOOT/SYS does, and starts SYSINIT. It
+fits in one sector and makes no CALLs.
 
 The driver does read (9), verify (10), write (13) and write system sector
 (14); reads of the directory cylinder return error 6, as LS-DOS expects.
@@ -163,13 +195,14 @@ The sources are not changed for zmac (only for the hard disk, by `@HD`).
 Status
 ------
 
-The hard disk image works in the emulator of `test/` (and the browser
-version it comes from); it has not run in trs80gp or on real hardware
-yet. `ZGET2.BAT` has not been run.
+The Model II hard disk image works in the emulator of `test/` (and the
+browser version it comes from), the Model 4 one in the minimal Model 4 of
+`test/m4.js`; neither has run in trs80gp, xtrs or on real hardware yet.
+`ZGET2.BAT` has not been run.
 
 MRAS 1.1a, XREF and BLDLIBS (from `../lsdos631/tools` and `other`), run
 under LS-DOS in that emulator on these sources, build the same set for
-the Model II (`@HD` off and on) and the Model 4: LOWCORE, SYS0-SYS13, the
+the Model II and the Model 4 (`@HD` off and on): LOWCORE, SYS0-SYS13, the
 29 library commands, SYS6-SYS8 and the utilities. Everything matches the
 zmac build byte for byte (BOOT/SYS and the libraries as files, the /CMD
 files in what they load and their records), except BACKUP: zmac writes
