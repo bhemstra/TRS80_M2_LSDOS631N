@@ -145,9 +145,12 @@ def build(out, lowcoref, sys0f, bootf, files, model=2):
 	boot = open(bootf, 'rb').read()
 	if model == 2:
 		assert len(boot) <= 512
-		img[poff(0, 0, 8):poff(0, 0, 8) + len(boot)] = boot
-		img[poff(0, 0, 9):poff(0, 0, 9) + len(mem)] = mem
-		img[poff(0, 0, 27):poff(0, 0, 27) + len(video)] = video
+		# sector 9 the loader (the ROM loads from sector 1 to 0000H, so
+		# it lands at 1000H, above a 4K boot ROM), 10-27 memory, 28-31
+		# video
+		img[poff(0, 0, 9):poff(0, 0, 9) + len(boot)] = boot
+		img[poff(0, 0, 10):poff(0, 0, 10) + len(mem)] = mem
+		img[poff(0, 0, 28):poff(0, 0, 28) + len(video)] = video
 		img[poff(0, 0, 1) + 2] = DIRCYL		# where @RDSSC looks
 	else:
 		# sector 1 the loader, then 2-37 memory, 38-45 video, counted

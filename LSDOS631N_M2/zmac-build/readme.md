@@ -123,13 +123,17 @@ The boot area, as 512 byte sectors of cylinder 0 head 0 (from 0):
 
 | Sector | Contents                                                      |
 |--------|---------------------------------------------------------------|
-| 0-7    | filler (sector 1 byte 2 is the directory cylinder)           |
-| 8      | `hdboot2.asm`, starting with `/* END BOOT */`                 |
-| 9-26   | memory 0000H-23FFH: lowcore with SYS0 loaded on top           |
-| 27-30  | video memory F800H-FFFFH (the logo SYS0 brings)               |
+| 0-8    | filler (sector 1 byte 2 is the directory cylinder)           |
+| 9      | `hdboot2.asm`, starting with `/* END BOOT */`                 |
+| 10-27  | memory 0000H-23FFH: lowcore with SYS0 loaded on top           |
+| 28-31  | video memory F800H-FFFFH (the logo SYS0 brings)               |
 
-The boot ROM reads sectors from cylinder 0 head 0 into memory from 0000H
-until one starts with `/* END BOOT */` and jumps past it. The loader moves
+The boot ROM reads sectors from cylinder 0 head 0, from sector 1 on, into
+memory from 0000H until one starts with `/* END BOOT */` and jumps past
+it. While it loads, the ROM covers 0000H-07FFH, or 0000H-0FFFH when it is
+in a 4K EPROM, so it can only see the text at 1000H or above: the loader
+is in sector 9, which lands at 1000H (or at 1200H on a drive that numbers
+its sectors from 1). The loader moves
 to 7E00H, turns the ROM off, works out whether the drive numbers its
 sectors from 0 (trs80gp) or 1, loads the memory image, tells the driver
 the numbering and starts SYSINIT at 1E00H.
